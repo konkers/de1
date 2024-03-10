@@ -1,6 +1,7 @@
 use core::str::FromStr;
 
-use heapless::Vec;
+use embedded_io_async::Write;
+use heapless::{String, Vec};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while_m_n},
@@ -10,9 +11,12 @@ use nom::{
     IResult,
 };
 
-use crate::Error;
+use crate::{Error, Result};
 
 const MAX_DATA_LENGTH: usize = 32; // TODO: confirm max data size.
+                                   // 2 characters pre byte of data plus 4 for `<[+-]c>` where c is the command
+                                   // plus 1 for the newline.
+const MAX_STRING_LENGTH: usize = MAX_DATA_LENGTH * 3 + 5;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct CommandFrame {
@@ -32,7 +36,7 @@ fn is_hex_digit(c: char) -> bool {
     c.is_digit(16)
 }
 
-fn from_hex(i: &str) -> Result<u8, core::num::ParseIntError> {
+fn from_hex(i: &str) -> core::result::Result<u8, core::num::ParseIntError> {
     u8::from_str_radix(i, 16)
 }
 
@@ -98,10 +102,64 @@ fn packet(i: &str) -> IResult<&str, Frame> {
     ))(i)
 }
 
+impl Frame {
+    pub async fn write<W: Write>(&self, mut w: W) -> Result<()> {
+        let mut output = String::<MAX_STRING_LENGTH>::new();
+        match self {
+            Frame::FromDe1(f) => {
+                output.push('[')?;
+                output.push(f.command)?;
+                output.push(']')?;
+                Self::append_data(&mut output, &f.data)?;
+                output.push('\n')?;
+            }
+            Frame::ToDe1(f) => {
+                output.push('<')?;
+                output.push(f.command)?;
+                output.push('>')?;
+                Self::append_data(&mut output, &f.data)?;
+                output.push('\n')?;
+            }
+            Frame::Subscribe(command) => {
+                output.push_str("<+")?;
+                output.push(*command)?;
+                output.push_str(">\n")?;
+            }
+            Frame::Unsubscribe(command) => {
+                output.push_str("<-")?;
+                output.push(*command)?;
+                output.push_str(">\n")?;
+            }
+        }
+        w.write_all(output.as_bytes())
+            .await
+            .map_err(|_| Error::IoError)?;
+
+        Ok(())
+    }
+
+    fn append_data(s: &mut String<MAX_STRING_LENGTH>, data: &[u8]) -> Result<()> {
+        for b in data {
+            s.push(
+                char::from_digit((b >> 4).into(), 16)
+                    .ok_or(Error::Unknown)?
+                    .to_ascii_uppercase(),
+            )?;
+            s.push(
+                char::from_digit((b & 0xf).into(), 16)
+                    .ok_or(Error::Unknown)?
+                    .to_ascii_uppercase(),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
 impl FromStr for Frame {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
         let (s, packet) = packet(s).map_err(|_| Error::ParseError)?;
 
         // Unparsed input at end of string is an error.
@@ -112,9 +170,19 @@ impl FromStr for Frame {
         Ok(packet)
     }
 }
+
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
+
+    const STARTUP_LOGS: &[&str] = &[
+        include_str!("test_files/brew-log.txt"),
+        include_str!("test_files/choose-profile-log.txt"),
+        include_str!("test_files/connect-log.txt"),
+        include_str!("test_files/startup-log.txt"),
+    ];
 
     #[test]
     fn from_de1_frame_parses() {
@@ -179,5 +247,28 @@ mod tests {
 
         // Command with extra input failes to parse.
         assert_eq!("[M]FF.".parse::<Frame>(), Err(Error::ParseError));
+    }
+
+    #[futures_test::test]
+    async fn decoding_and_reencoding_logs_is_noop() {
+        for log in STARTUP_LOGS {
+            for line in log.lines() {
+                let Ok(frame) = line.parse::<Frame>() else {
+                    panic!("Unable to parse line: \"{line}\"");
+                };
+                let mut output = std::vec::Vec::new();
+                if let Err(e) = frame.write(&mut output).await {
+                    panic!("Unable to encode line \"{line}\": {e:?}");
+                };
+
+                let encoded_frame = core::str::from_utf8(&output).unwrap();
+                assert_eq!(
+                    // Normalize lines to uppercase.
+                    line.to_ascii_uppercase().as_str(),
+                    // Strip new line from encodded frame to match line.
+                    encoded_frame.trim_end()
+                );
+            }
+        }
     }
 }
