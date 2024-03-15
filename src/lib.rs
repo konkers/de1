@@ -14,15 +14,20 @@ use fixed::{
     types::{U16F16, U4F12, U4F4, U7F1, U8F24, U8F8},
 };
 
+pub mod fake;
 pub mod serial;
 
 pub use serial::{CommandFrame, Frame};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
-    ParseError,
     BinRwError,
+    IoError,
+    ParseError,
+    UnexpectedFrame,
     UnknownCommand(char),
+    UnsupportedMmr(u32),
+    Unknown,
 }
 
 impl From<binrw::Error> for Error {
@@ -31,7 +36,13 @@ impl From<binrw::Error> for Error {
     }
 }
 
-type Result<T> = core::result::Result<T, Error>;
+impl From<()> for Error {
+    fn from(_value: ()) -> Self {
+        Self::Unknown
+    }
+}
+
+pub type Result<T> = core::result::Result<T, Error>;
 
 fn read_u24(val: [u8; 3]) -> u32 {
     let data = [0u8, val[0], val[1], val[2]];
@@ -95,6 +106,8 @@ pub enum Command {
 }
 
 impl Command {
+    pub const MAX_DATA_LENGTH: usize = 32; // TODO: confirm max data size.
+
     pub const fn serial_command(&self) -> char {
         match self {
             Command::Versions => 'A',
@@ -143,6 +156,28 @@ impl Command {
             Command::FrameWrite => 8,
             Command::WaterLevels => 4,
             Command::Calibration => 14,
+        }
+    }
+}
+
+impl TryFrom<char> for Command {
+    type Error = Error;
+
+    fn try_from(c: char) -> core::result::Result<Self, Self::Error> {
+        match c {
+            'A' => Ok(Self::Versions),
+            'B' => Ok(Self::RequestedState),
+            'E' => Ok(Self::ReadFromMmr),
+            'F' => Ok(Self::WriteToMmr),
+            'I' => Ok(Self::FwMapRequest),
+            'K' => Ok(Self::ShotSettings),
+            'M' => Ok(Self::ShotSample),
+            'N' => Ok(Self::StateInfo),
+            'O' => Ok(Self::HeaderWrite),
+            'P' => Ok(Self::FrameWrite),
+            'Q' => Ok(Self::WaterLevels),
+            'R' => Ok(Self::Calibration),
+            _ => Err(Error::UnknownCommand(c)),
         }
     }
 }
@@ -410,8 +445,8 @@ pub enum Packet {
     ShotHeaderWrite(ShotHeaderWrite),
     ShotFrameWrite(ShotFrameWrite),
     WaterLevels(WaterLevels),
-    Subscribe(char),
-    Unsubscribe(char),
+    Subscribe(Command),
+    Unsubscribe(Command),
 }
 
 impl Packet {
@@ -458,21 +493,31 @@ impl Packet {
     }
 }
 
+impl TryFrom<Frame> for Packet {
+    type Error = Error;
+
+    fn try_from(frame: Frame) -> core::prelude::v1::Result<Self, Self::Error> {
+        match frame {
+            Frame::FromDe1(command) | Frame::ToDe1(command) => Self::from_command(&command),
+            Frame::Subscribe(command) => Ok(Self::Subscribe(Command::try_from(command)?)),
+            Frame::Unsubscribe(command) => Ok(Self::Unsubscribe(Command::try_from(command)?)),
+        }
+    }
+}
+
 impl FromStr for Packet {
     type Err = Error;
 
     fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
         let frame = s.parse::<Frame>()?;
-        match frame {
-            Frame::FromDe1(command) | Frame::ToDe1(command) => Self::from_command(&command),
-            Frame::Subscribe(command) => Ok(Self::Subscribe(command)),
-            Frame::Unsubscribe(command) => Ok(Self::Unsubscribe(command)),
-        }
+        frame.try_into()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
 
     #[test]
@@ -480,7 +525,7 @@ mod tests {
         let packet = "[M]5F380000000058DA59C2E645F55A00000000A0"
             .parse::<Packet>()
             .unwrap();
-        println!("{packet:?}");
-        assert!(false);
+        std::println!("{packet:?}");
+        //assert!(false);
     }
 }

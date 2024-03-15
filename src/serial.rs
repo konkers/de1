@@ -11,17 +11,16 @@ use nom::{
     IResult,
 };
 
-use crate::{Error, Result};
+use crate::{Command, Error, Result};
 
-const MAX_DATA_LENGTH: usize = 32; // TODO: confirm max data size.
-                                   // 2 characters pre byte of data plus 4 for `<[+-]c>` where c is the command
-                                   // plus 1 for the newline.
-const MAX_STRING_LENGTH: usize = MAX_DATA_LENGTH * 3 + 5;
+// 2 characters pre byte of data plus 4 for `<[+-]c>` where c is the command
+// plus 1 for the newline.
+pub const MAX_ENCODED_LENGTH: usize = Command::MAX_DATA_LENGTH * 3 + 5;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct CommandFrame {
     pub command: char,
-    pub data: Vec<u8, MAX_DATA_LENGTH>,
+    pub data: Vec<u8, { Command::MAX_DATA_LENGTH }>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -44,12 +43,12 @@ fn hex_byte(i: &str) -> IResult<&str, u8> {
     map_res(take_while_m_n(2, 2, is_hex_digit), from_hex)(i)
 }
 
-fn data(i: &str) -> IResult<&str, Vec<u8, MAX_DATA_LENGTH>> {
+fn data(i: &str) -> IResult<&str, Vec<u8, { Command::MAX_DATA_LENGTH }>> {
     fold_many_m_n(
         0,
-        MAX_DATA_LENGTH,
+        Command::MAX_DATA_LENGTH,
         hex_byte,
-        Vec::<u8, MAX_DATA_LENGTH>::new,
+        Vec::<u8, { Command::MAX_DATA_LENGTH }>::new,
         |mut acc, item| {
             // Ignore errors as we'll never consume more than MAX_DATA_LENGTH
             // bytes due to the bound on fold_many_m_n.
@@ -103,8 +102,8 @@ fn packet(i: &str) -> IResult<&str, Frame> {
 }
 
 impl Frame {
-    pub async fn write<W: Write>(&self, mut w: W) -> Result<()> {
-        let mut output = String::<MAX_STRING_LENGTH>::new();
+    pub async fn write<W: Write>(&self, mut w: W) -> Result<usize> {
+        let mut output = String::<MAX_ENCODED_LENGTH>::new();
         match self {
             Frame::FromDe1(f) => {
                 output.push('[')?;
@@ -131,14 +130,14 @@ impl Frame {
                 output.push_str(">\n")?;
             }
         }
-        w.write_all(output.as_bytes())
-            .await
-            .map_err(|_| Error::IoError)?;
 
-        Ok(())
+        let data = output.as_bytes();
+        w.write_all(&data).await.map_err(|_| Error::IoError)?;
+
+        Ok(data.len())
     }
 
-    fn append_data(s: &mut String<MAX_STRING_LENGTH>, data: &[u8]) -> Result<()> {
+    fn append_data(s: &mut String<MAX_ENCODED_LENGTH>, data: &[u8]) -> Result<()> {
         for b in data {
             s.push(
                 char::from_digit((b >> 4).into(), 16)
@@ -168,6 +167,41 @@ impl FromStr for Frame {
         }
 
         Ok(packet)
+    }
+}
+
+pub struct LineReader<const N: usize> {
+    buffer: String<N>,
+    overflow: bool,
+}
+
+impl<const N: usize> LineReader<N> {
+    pub fn new() -> Self {
+        Self {
+            buffer: String::new(),
+            overflow: false,
+        }
+    }
+
+    pub fn handle_char(&mut self, c: char) -> Result<Option<Frame>> {
+        if c == '\n' {
+            let frame = if !self.overflow {
+                Some(self.buffer.as_str().parse::<Frame>()?)
+            } else {
+                None
+            };
+            self.buffer.clear();
+            self.overflow = false;
+            return Ok(frame);
+        }
+
+        // Discard non-ascii bytes
+        if !c.is_ascii() {
+            return Ok(None);
+        }
+
+        self.overflow = self.buffer.push(c).is_err();
+        Ok(None)
     }
 }
 
