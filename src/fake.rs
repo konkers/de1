@@ -66,7 +66,7 @@ impl<'rx, 'tx> De1<'rx, 'tx> {
         }
     }
 
-    async fn handle_requested_state(&mut self, value: RequestedState) -> Result<()> {
+    async fn handle_requested_state(&mut self, _value: RequestedState) -> Result<()> {
         Ok(())
     }
 
@@ -143,31 +143,31 @@ impl<'rx, 'tx> De1<'rx, 'tx> {
         }
     }
 
-    async fn handle_write_to_mmr(&mut self, value: MmrOpperation) -> Result<()> {
+    async fn handle_write_to_mmr(&mut self, _value: MmrOpperation) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_shot_settings(&mut self, value: ShotSettings) -> Result<()> {
+    async fn handle_shot_settings(&mut self, _value: ShotSettings) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_shot_sample(&mut self, value: ShotSample) -> Result<()> {
+    async fn handle_shot_sample(&mut self, _value: ShotSample) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_state_info(&mut self, value: StateInfo) -> Result<()> {
+    async fn handle_state_info(&mut self, _value: StateInfo) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_shot_header_write(&mut self, value: ShotHeaderWrite) -> Result<()> {
+    async fn handle_shot_header_write(&mut self, _value: ShotHeaderWrite) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_shot_frame_write(&mut self, value: ShotFrameWrite) -> Result<()> {
+    async fn handle_shot_frame_write(&mut self, _value: ShotFrameWrite) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_water_levels(&mut self, value: WaterLevels) -> Result<()> {
+    async fn handle_water_levels(&mut self, _value: WaterLevels) -> Result<()> {
         Ok(())
     }
 

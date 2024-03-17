@@ -3,12 +3,7 @@
 use core::fmt::Debug;
 use core::str::FromStr;
 
-use binrw::{
-    binrw, // #[binrw] attribute
-    io::Cursor,
-    BinRead,  // trait for reading
-    BinWrite, // trait for writing
-};
+use binrw::{binrw, io::Cursor, BinRead};
 use fixed::{
     traits::LossyFrom,
     types::{U16F16, U4F12, U4F4, U7F1, U8F24, U8F8},
