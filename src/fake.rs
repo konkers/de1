@@ -1,15 +1,15 @@
-use core::{cmp::min, num::Wrapping};
+use core::num::Wrapping;
 
 use binrw::{io::Cursor, meta::WriteEndian, BinWrite};
 use embassy_futures::select::{select, Either};
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
-    pipe::{self, Pipe},
+    pipe::{self},
 };
 use embassy_time::{Duration, Instant, Timer};
-use esp_println::println;
 use fixed::types::{U16F16, U4F12, U4F4, U8F8};
-use heapless::{String, Vec};
+use heapless::Vec;
+use log::{error, info};
 
 use crate::{
     serial::{Frame, LineReader},
@@ -172,7 +172,7 @@ impl<'rx, 'tx> De1<'rx, 'tx> {
     }
 
     async fn handle_subscription(&mut self, command: Command, enable: bool) -> Result<()> {
-        println!("FAKE: subscription {:?} {}", command, enable);
+        info!("FAKE: subscription {:?} {}", command, enable);
         match command {
             Command::ReadFromMmr => self.subscriptions.mmr_read = enable,
             Command::ShotSample => self.subscriptions.shot_sample = enable,
@@ -219,7 +219,7 @@ impl<'rx, 'tx> De1<'rx, 'tx> {
     async fn handle_read(&mut self, data: &[u8]) {
         for c in data.iter().map(|b| *b as char) {
             if let Err(e) = self.handle_char(c).await {
-                println!("FAKE: error handling char '{c}': {e:?}");
+                error!("FAKE: error handling char '{c}': {e:?}");
             }
         }
     }
@@ -260,7 +260,7 @@ impl<'rx, 'tx> De1<'rx, 'tx> {
     }
 
     async fn handle_tick(&mut self) -> Result<()> {
-        println!("FAKE: tick");
+        info!("FAKE: tick");
         if self.subscriptions.shot_sample {
             self.send_shot_sample().await?
         }
